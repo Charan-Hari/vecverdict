@@ -1,7 +1,8 @@
 """Command line interface.
 
-Three commands, each answering one question: demo ("show me the problem"),
-filter ("does my stack have it?"), and switch ("should I move these vectors?").
+Four commands, each answering one question: demo ("show me the problem"),
+filter ("does my stack have it?"), switch ("should I move these vectors?"),
+and site ("regenerate the published demo data").
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import __version__, backends, datasets, sweep, switch
+from . import __version__, backends, datasets, probe, sweep, switch
 from .sweep import DEFAULT_SELECTIVITIES, SweepResult
 
 # Backends measured when the user does not name any.
@@ -121,6 +122,31 @@ def _build_parser() -> argparse.ArgumentParser:
     switch_cmd.add_argument("--json", type=Path, help="write the report JSON here")
     switch_cmd.set_defaults(handler=_run_switch)
 
+    site_cmd = subparsers.add_parser(
+        "site", help="regenerate the demo site's measured data"
+    )
+    site_cmd.add_argument("--n", type=int, default=30_000, help="corpus size (default: 30000)")
+    site_cmd.add_argument("--dim", type=int, default=128, help="dimension (default: 128)")
+    site_cmd.add_argument("--k", type=int, default=10, help="results per query (default: 10)")
+    site_cmd.add_argument("--queries", type=int, default=50, help="number of queries")
+    site_cmd.add_argument(
+        "--selectivity",
+        type=float,
+        default=0.001,
+        help="filter width for the per-query probe (default: 0.001)",
+    )
+    site_cmd.add_argument("--seed", type=int, default=0)
+    site_cmd.add_argument(
+        "--docs", type=Path, default=Path("docs"), help="site directory (default: docs)"
+    )
+    site_cmd.add_argument(
+        "--results",
+        type=Path,
+        default=Path("results"),
+        help="directory for the canonical result files (default: results)",
+    )
+    site_cmd.set_defaults(handler=_run_site)
+
     return parser
 
 
@@ -214,6 +240,96 @@ def _run_switch(args: argparse.Namespace) -> int:
         args.json.parent.mkdir(parents=True, exist_ok=True)
         args.json.write_text(json.dumps(report.to_dict(), indent=2), encoding="utf-8")
         print(f"\nwrote {args.json}")
+    return 0
+
+
+def _run_site(args: argparse.Namespace) -> int:
+    """Regenerate both JSON files the demo site reads.
+
+    The site is only credible while its data is measured output, so this
+    writes the canonical copies under results/ and mirrors them into the site
+    directory rather than letting the two be edited apart.
+    """
+    installed = backends.available()
+    if not installed:
+        print(
+            "error: no backends installed. Try: pip install 'vecverdict[turbovec,faiss,chroma]'",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(f"Generating {args.n:,} clustered vectors (dim {args.dim})...")
+    dataset = datasets.synthetic(
+        n=args.n, dim=args.dim, n_queries=args.queries, seed=args.seed
+    )
+
+    print(f"Sweeping {len(installed)} backends: {', '.join(installed)}")
+    result = _sweep(dataset, installed, args.k, "ip", seed=args.seed)
+
+    instances = [backends.create(name, dim=dataset.dim) for name in installed]
+    try:
+        for instance in instances:
+            instance.build(dataset.vectors, dataset.ids)
+
+        rng = np.random.default_rng([args.seed, int(args.selectivity * 1e9)])
+        allowed = sweep.make_allowlist(dataset.ids, args.selectivity, args.k, rng)
+
+        # Show the query that most separates the backends: a run where they all
+        # agree would hide the very behaviour the page exists to demonstrate.
+        chosen, widest = 0, -1
+        for index in range(min(10, dataset.queries.shape[0])):
+            candidate = probe.probe(
+                instances,
+                dataset.vectors,
+                dataset.ids,
+                dataset.queries[index],
+                allowed,
+                k=args.k,
+                dataset=dataset.name,
+                query_index=index,
+                build=False,
+            )
+            counts = [entry.n_correct for entry in candidate.probes]
+            spread = max(counts) - min(counts)
+            if spread > widest:
+                chosen, widest = index, spread
+
+        probe_result = probe.probe(
+            instances,
+            dataset.vectors,
+            dataset.ids,
+            dataset.queries[chosen],
+            allowed,
+            k=args.k,
+            dataset=dataset.name,
+            query_index=chosen,
+            build=False,
+        )
+    finally:
+        for instance in instances:
+            instance.close()
+
+    sweep_path = result.save(args.results / "demo_synthetic_30k.json")
+    probe_path = probe_result.save(args.results / "probe_0.1pct.json")
+
+    data_dir = args.docs / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / "sweep.json").write_text(
+        sweep_path.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    (data_dir / "probe.json").write_text(
+        probe_path.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+
+    _write_charts(result, args.docs)
+
+    print(f"\nProbe query {chosen} at {args.selectivity:.3%} ({allowed.size} allowed):")
+    for entry in probe_result.probes:
+        print(
+            f"  {entry.backend:<24} returned {entry.n_returned:>2}/{args.k}"
+            f"   correct {entry.n_correct:>2}/{args.k}"
+        )
+    print(f"\nWrote {sweep_path}, {probe_path}, and {data_dir}")
     return 0
 
 

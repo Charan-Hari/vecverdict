@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vector Verdict — what your vector index actually returns</title>
+<meta name="description" content="A measured demonstration that vector indexes silently return fewer, or wrong, results when a metadata filter is applied.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="hero">
+  <h1>Vector Verdict</h1>
+  <p class="tagline">You asked for 10 results. Watch what comes back.</p>
+  <p class="sub">Every number on this page was measured on this machine and is reproducible with one command. Nothing here is illustrative.</p>
+  <a class="repo" href="https://github.com/Charan-Hari/vecverdict">View on GitHub →</a>
+</header>
+
+<main>
+
+<section id="slots">
+  <h2>One query. Four indexes. Same filter.</h2>
+  <p class="lead">
+    A corpus of <b id="m-vectors">—</b> vectors. A metadata filter allows
+    <b id="m-allowed">—</b> of them through — <b id="m-sel">—</b> of the corpus.
+    All four indexes are asked the <em>same</em> query for the top
+    <b id="m-k">—</b> neighbours, restricted to that <em>same</em> allowed set.
+  </p>
+  <p class="lead">
+    The allowed set is larger than k, so every index <em>could</em> return 10 results.
+    Exhaustive search proves the correct answers exist.
+  </p>
+
+  <div id="grid" class="grid"></div>
+
+  <div class="legend">
+    <span><i class="sw hit"></i> correct neighbour</span>
+    <span><i class="sw miss"></i> returned, but not a true top-10</span>
+    <span><i class="sw empty"></i> nothing returned</span>
+  </div>
+
+  <p class="callout" id="verdict"></p>
+</section>
+
+<section id="why">
+  <h2>Why this happens</h2>
+  <div class="cards">
+    <div class="card">
+      <h3>Graph indexes traverse, then filter</h3>
+      <p>
+        HNSW walks a proximity graph built over the <em>whole</em> corpus. When a
+        filter excludes most vectors, the walk keeps landing on disallowed nodes
+        and the candidate set collapses before it reaches the allowed ones. The
+        neighbours exist; the traversal never arrives.
+      </p>
+    </div>
+    <div class="card">
+      <h3>Flat indexes scan everything</h3>
+      <p>
+        A flat index compares the query against every allowed vector, so a filter
+        cannot hide anything from it. It pays in latency and is immune to this
+        failure by construction.
+      </p>
+    </div>
+    <div class="card">
+      <h3>Nothing raises an error</h3>
+      <p>
+        No exception, no warning, no degraded-mode flag. The call returns
+        successfully. If your monitoring records latency and average recall, this
+        is invisible.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section id="sweep">
+  <h2>It is a cliff, not a slope</h2>
+  <p class="lead">
+    The single query above is one point. Sweeping the filter from
+    <b id="s-widest">—</b> of the corpus down to <b id="s-narrowest">—</b>
+    shows where each index breaks. Drag the slider.
+  </p>
+
+  <div class="slider-row">
+    <label for="sel">Filter allows</label>
+    <input type="range" id="sel" min="0" max="5" value="0" step="1">
+    <output id="sel-label">—</output>
+  </div>
+
+  <div class="table-scroll">
+  <table class="results">
+    <thead>
+      <tr>
+        <th>Index</th><th>Type</th>
+        <th class="num">Returned</th>
+        <th class="num">recall@10</th>
+        <th class="num">Latency</th>
+      </tr>
+    </thead>
+    <tbody id="sweep-body"></tbody>
+  </table>
+  </div>
+  <p class="note" id="sweep-note"></p>
+</section>
+
+<section id="charts">
+  <h2>The full sweep</h2>
+  <figure>
+    <img src="shortfall_cliff.svg" alt="Results returned versus filter selectivity, showing FAISS HNSW collapsing while flat indexes hold at ten">
+    <figcaption>Results actually returned as the filter narrows. Ten is the number requested throughout.</figcaption>
+  </figure>
+  <figure>
+    <img src="recall_curve.svg" alt="recall@10 versus filter selectivity for each index">
+    <figcaption>recall@10 against exhaustive ground truth. Chroma keeps returning ten results while their contents degrade — a shortfall-only metric would rate it healthy.</figcaption>
+  </figure>
+</section>
+
+<section id="run">
+  <h2>Reproduce it</h2>
+  <p class="lead">On your own embeddings, which is the only measurement that matters to you:</p>
+<pre><code>pip install 'vecverdict[turbovec,faiss,viz]'
+
+vecverdict demo                         # the run behind this page
+vecverdict filter --dataset mine.npy    # your vectors
+</code></pre>
+  <p class="note">
+    Measured on <span id="m-machine">—</span>.
+    Absolute latencies are machine-specific; the shortfall is reproduced in CI on
+    Linux, macOS and Windows.
+  </p>
+</section>
+
+</main>
+
+<footer>
+  <p>
+    <a href="https://github.com/Charan-Hari/vecverdict">Source</a> ·
+    <a href="https://github.com/Charan-Hari/vecverdict/blob/main/results/">Raw results</a> ·
+    MIT
+  </p>
+  <p class="fine">
+    Built on <a href="https://github.com/RyanCodrai/turbovec">turbovec</a>,
+    <a href="https://github.com/facebookresearch/faiss">FAISS</a> and
+    <a href="https://github.com/chroma-core/chroma">Chroma</a>.
+    Finding a mistake here is a contribution — please open an issue.
+  </p>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

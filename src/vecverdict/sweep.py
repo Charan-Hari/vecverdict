@@ -191,7 +191,7 @@ def run(
         # Reseeded per selectivity so a backend list change cannot alter filters.
         rng = np.random.default_rng([seed, int(selectivity * 1e9)])
         allowed = make_allowlist(ids, selectivity, k, rng)
-        allowed_rows = np.searchsorted(ids, allowed) if _is_sorted(ids) else _rows_for(ids, allowed)
+        allowed_rows = rows_for_ids(ids, allowed)
 
         truth = groundtruth.compute(
             vectors, queries, k=k, metric=metric, allowlist=allowed_rows
@@ -233,6 +233,25 @@ def run(
             )
 
     return result
+
+
+def rows_for_ids(ids: np.ndarray, allowed: np.ndarray) -> np.ndarray:
+    """Corpus row indices for the given external ids.
+
+    Ground truth is computed over row indices while backends speak external
+    ids, so this translation sits between them. Shared with the probe module
+    to guarantee both describe the same neighbours.
+
+    Args:
+        ids: All external ids, shape (n,).
+        allowed: Ids to locate.
+
+    Returns:
+        Row indices of `allowed` within `ids`.
+    """
+    if _is_sorted(ids):
+        return np.searchsorted(ids, allowed)
+    return _rows_for(ids, allowed)
 
 
 def _is_sorted(ids: np.ndarray) -> bool:
