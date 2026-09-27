@@ -16,7 +16,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT">
   <img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python 3.10+">
-  <img src="https://img.shields.io/badge/tests-140%20passing-brightgreen.svg" alt="140 tests passing">
+  <img src="https://img.shields.io/badge/tests-143%20passing-brightgreen.svg" alt="143 tests passing">
   <img src="https://img.shields.io/badge/status-alpha-orange.svg" alt="alpha">
 </p>
 
@@ -26,18 +26,18 @@
 
 You ask your vector database for 10 results with a metadata filter applied.
 
-It returns 1.
+It returns 2.
 
 No exception. No warning. No degraded-mode flag. Just a shorter list than you asked for —
 and if you only logged latency and average recall, you would never know.
 
 ```python
-# 30 of 30,000 vectors pass the filter. All 30 are in the index.
+# 50 of 50,000 real OpenAI embeddings pass the filter. All 50 are in the index.
 results = index.search(query, k=10, filter=allowed_ids)
-len(results)   # 1
+len(results)   # 2      ← measured, FAISS HNSW, dim 1536
 ```
 
-Exhaustive search over those same 30 vectors returns all 10 correct neighbours instantly.
+Exhaustive search over those same 50 vectors returns all 10 correct neighbours instantly.
 The data is there. The index simply cannot reach it.
 
 **Why it happens.** HNSW — the index behind FAISS HNSW, pgvector, Qdrant, Weaviate,
@@ -46,14 +46,39 @@ nodes from consideration, the walk runs out of permitted neighbours, and the tra
 terminates early in a disconnected region. The index reports success because, from its own
 point of view, the search completed.
 
-**Why nobody notices.** Standard benchmarks report mean recall. A query that returned 1 of
-10 results and a query that returned 10 mediocre ones produce a similar average. The
+**Why it slips through.** Standard monitoring reports mean recall. A query that returned 1
+of 10 results and a query that returned 10 mediocre ones produce a similar average. The
 failure dissolves into the mean, and the shape of it — *how many results came back at
-all* — is not measured.
+all* — is not separated out.
 
 This matters most in exactly the cases teams care about: per-tenant isolation, ACL
 enforcement, time-window queries, category filters. Every one of them is a selective
 filter over a shared index.
+
+### Prior art
+
+Filtered-search degradation is **known and studied** — this project does not claim to have
+discovered it:
+
+- [**VectorDBBench**](https://github.com/zilliztech/VectorDBBench) (Zilliz) benchmarks
+  filtered search across hosted vector databases.
+- [**VecBench**](https://dl.acm.org/doi/10.1145/3802125) is a controlled academic benchmark
+  built specifically for filtered vector search and selectivity.
+- [**Qdrant**](https://qdrant.tech/articles/filtered-vector-search-acorn/) has written
+  publicly about this failure mode and the ACORN / filterable-HNSW mitigations.
+
+If you are choosing a production vector database, use those. What `vecverdict` adds is
+narrower and deliberately so:
+
+1. **It separates shortfall from wrongness.** Most tooling reports a single recall number.
+   These are different bugs with different fixes: "returned 2 results instead of 10" and
+   "returned 10 results, 3 of them wrong" both show up as low recall, and only one of them
+   is visible to a check that counts results. On real embeddings FAISS HNSW does both at
+   once, at different filter widths.
+2. **It runs on your embeddings with no infrastructure.** One command against a `.npy`
+   file. No database to stand up, no container, no cloud account, no config file.
+3. **It shows per-query, slot-by-slot results.** Aggregate recall is abstract. "Slot 3 came
+   back wrong on this query" is not.
 
 ## The approach
 
@@ -82,16 +107,53 @@ Three design commitments make the comparison fair:
 > **[▶ Explore these results interactively](https://charan-hari.github.io/vecverdict/)** — see a single
 > query's results slot by slot, and drag the filter from 100% down to 0.01%.
 
+### On real embeddings
+
+50,000 DBpedia entities embedded with OpenAI `text-embedding-ada-002` · **dim 1536** ·
+k=10 · 50 queries · inner product · measured against exhaustive search.
+Full data: [`results/sweep_dbpedia_openai_50000.json`](https://github.com/Charan-Hari/vecverdict/blob/main/results/sweep_dbpedia_openai_50000.json)
+
 <p align="center">
-  <img src="docs/shortfall_cliff.svg" alt="Results returned vs filter selectivity" width="100%">
+  <img src="https://raw.githubusercontent.com/Charan-Hari/vecverdict/main/docs/shortfall_cliff.svg" alt="Results returned vs filter selectivity on real OpenAI embeddings" width="100%">
 </p>
 
-30,000 clustered vectors · dim 128 · k=10 · 50 queries · measured against exhaustive search.
-Full data: [`results/demo_synthetic_30k.json`](results/demo_synthetic_30k.json)
+Results returned, of 10 requested, and recall against exact ground truth:
 
-### Two different failures
+| selectivity | allowed | faiss-flat | turbovec-4bit | chroma | faiss-hnsw |
+|---|---|---|---|---|---|
+| 100%   | 50,000 | 10.0 · 1.000 | 10.0 · 0.952 | 10.0 · 0.992 | 10.0 · 1.000 |
+| 50%    | 25,000 | 10.0 · 1.000 | 10.0 · 0.968 | 10.0 · 0.990 | 10.0 · 1.000 |
+| 10%    | 5,000  | 10.0 · 1.000 | 10.0 · 0.958 | 10.0 · 1.000 | 10.0 · 0.994 |
+| 1%     | 500    | 10.0 · 1.000 | 10.0 · 0.936 | 10.0 · 1.000 | **9.8 · 0.690** |
+| 0.1%   | 50     | 10.0 · 1.000 | 10.0 · 0.958 | 10.0 · 1.000 | **2.0 · 0.180** |
+| 0.01%  | 10     | 10.0 · 1.000 | 10.0 · 1.000 | 10.0 · 1.000 | **0.3 · 0.026** |
 
-**Failure 1 — the index returns fewer results than requested.**
+**FAISS HNSW collapses on real data.** At 0.1% selectivity it returns **2 of 10** requested
+results (recall 0.180); at 0.01% it returns **0.3 of 10** (recall 0.026). Fifty vectors were
+permitted, all fifty were indexed, and exhaustive search retrieved the correct ten every
+time. No exception was raised at any point.
+
+Note the shape at 1%: HNSW returns **9.8 of 10** — essentially a full set — while recall is
+**0.690**. A monitor that only counts results sees nothing wrong, and 31% of what came back
+is not a true neighbour. This is why the two measurements are reported separately.
+
+### What did *not* reproduce
+
+Chroma scores **recall 1.000 at every selectivity below 10%**, and 0.990–0.992 at the
+widest. It is also an HNSW index, so this is worth explaining rather than glossing over:
+`vecverdict` passes Chroma an explicit `ids=` allowlist, and Chroma is able to pre-filter to
+that set and search it exhaustively instead of traversing the graph. Given the allowlist, it
+does the right thing.
+
+An earlier version of this README presented "returns a full set with wrong contents" as a
+headline Chroma failure, based on synthetic data. **On real embeddings it does not
+reproduce**, and that claim has been withdrawn. The synthetic result is retained below and
+labelled, because the difference between the two is itself the most useful thing here.
+
+### On synthetic data — and why the discrepancy matters
+
+30,000 clustered vectors · dim 128 · k=10 · 50 queries.
+Full data: [`results/sweep_synthetic_30000x128.json`](https://github.com/Charan-Hari/vecverdict/blob/main/results/sweep_synthetic_30000x128.json)
 
 Results returned, of 10 requested:
 
@@ -101,27 +163,26 @@ Results returned, of 10 requested:
 | 10% | 3,000 | 10.0 | 10.0 | 10.0 | 10.0 |
 | 1% | 300 | 10.0 | 10.0 | 10.0 | **5.7** |
 | 0.1% | 30 | 10.0 | 10.0 | 10.0 | **0.3** |
-| 0.01% | 10 | 10.0 | 10.0 | **9.0** | **0.1** |
+| 0.01% | 10 | 10.0 | 10.0 | **8.0** | **0.1** |
 
-At 0.1% selectivity FAISS HNSW returns **0.26 results out of 10**, recall **0.024**. Thirty
-vectors were permitted, all thirty were indexed, and exhaustive search retrieved the
-correct ten.
-
-**Failure 2 — the index returns a full result set that is quietly wrong.**
-
-This one is more dangerous, because every naive check passes. Chroma returns all 10
-results at every selectivity but the narrowest — and the contents degrade anyway:
+On this data Chroma returns full result sets whose *contents* are wrong — unlike the real
+embeddings above, where it scored 1.000 throughout:
 
 | selectivity | returned | recall@10 | results that are wrong |
 |---|---|---|---|
-| 100% | 10.0 / 10 | 0.926 | 7% |
-| 10% | 10.0 / 10 | 0.726 | **27%** |
-| 1% | 10.0 / 10 | 0.712 | **29%** |
-| 0.1% | 10.0 / 10 | 0.654 | **35%** |
+| 100% | 10.0 / 10 | 0.912 | 9% |
+| 10% | 10.0 / 10 | 0.772 | **23%** |
+| 1% | 10.0 / 10 | 0.696 | **30%** |
+| 0.1% | 10.0 / 10 | 0.800 | **20%** |
 
-A shortfall-only metric would rate Chroma healthy here. A recall-only metric would miss how
-completely FAISS HNSW collapses. **Both measurements are necessary**, which is the central
-design argument of this tool.
+**The same backend, measured the same way, behaves differently on synthetic clustered
+vectors than on real 1536-d embeddings.** Low-dimensional tight clusters produce many
+near-equidistant candidates, so an approximate ranking is far easier to get wrong; real
+high-dimensional embeddings are better separated.
+
+The practical lesson is the one this tool exists to serve: **benchmark numbers do not
+transfer between datasets.** Published figures — including the ones above — tell you what
+happened on someone else's vectors. Run it on yours.
 
 ### What this is not
 
@@ -152,8 +213,10 @@ why measuring on *your* data at *your* scale is the point of this tool.
 
 ## Quick start
 
+Not on PyPI — install straight from the repository:
+
 ```bash
-pip install 'vecverdict[turbovec,faiss,viz]'
+pip install 'vecverdict[turbovec,faiss,viz] @ git+https://github.com/Charan-Hari/vecverdict'
 ```
 
 <details>
@@ -179,6 +242,17 @@ vecverdict demo --charts docs/
 ```bash
 vecverdict filter --dataset my_vectors.npy --k 10 --charts out/ --json out/run.json
 ```
+
+**Reproduce the real-embedding run above.** Downloads public DBpedia vectors from Hugging
+Face; no API key and no account needed:
+
+```bash
+pip install 'vecverdict[all] @ git+https://github.com/Charan-Hari/vecverdict'
+vecverdict filter --dataset dbpedia --limit 50000 --queries 50
+```
+
+Every command is also available as `python -m vecverdict ...`, which works when the
+console script is not on `PATH`.
 
 **Ask whether compressing your index is worth it:**
 
@@ -255,14 +329,25 @@ Constraints on the tool, not marketing copy. Each is enforced by a test.
 
 Stated plainly, because a benchmark that hides its limits is not worth trusting.
 
-- Results above are **synthetic clustered data at 30k vectors** — directional, not yet
-  publishable. Real embeddings at scale are the next milestone.
+- Measured on **real 1536-d OpenAI embeddings at 50k vectors** and on synthetic clustered
+  data at 30k. The two disagree about Chroma (see above), which is a caution about *all*
+  published benchmark numbers, including these. 50k is still far from production scale.
 - Only **FAISS, Chroma and turbovec** are measured so far. Qdrant, Weaviate and pgvector
   are the most valuable additions, since they are the most widely deployed.
+- **Chroma and turbovec receive an explicit id allowlist**, which lets them pre-filter.
+  A production deployment filtering by metadata predicate rather than by id may behave
+  differently. This is a real caveat on the comparison, not a tuning detail.
 - HNSW behaviour depends on `M` and `efSearch`; only one configuration is swept today.
   A higher `efSearch` will recover some of the shortfall, at a latency cost — quantifying
   that trade-off is open work.
 - Latency figures are single-threaded and indicative, not tuned benchmarks.
+- **HNSW graph construction is not deterministic.** Repeated runs of the same command on
+  the same data gave Chroma recall of 1.000, 0.998 and 0.992 at the widest filter. Small
+  differences between a figure here and one you reproduce are expected; the shortfall
+  cliff itself reproduces consistently.
+- Filtered-search degradation is **already documented** by the prior art linked above.
+  This tool's contribution is the measurement split and the zero-setup local run, not the
+  discovery of the effect.
 
 ## Development
 
@@ -271,25 +356,27 @@ git clone https://github.com/Charan-Hari/vecverdict
 cd vecverdict
 python -m venv .venv && .venv/Scripts/activate      # Linux/macOS: source .venv/bin/activate
 pip install -e '.[all,dev]'
-pytest -q            # 140 passing, 3 skipped
+pytest -q            # 145 passing, 3 skipped
 ruff check src tests
 ```
 
 Regenerate the published results and the demo site's data:
 
 ```bash
-vecverdict site      # writes results/*.json, docs/data/*.json and docs/*.svg
+vecverdict site --dataset dbpedia --n 50000    # the run behind the live demo
+vecverdict site                                # synthetic, no download
 ```
 
-`tests/test_site.py` fails if the site's JSON drifts from `results/`, so the page cannot
-show numbers the tool did not produce.
+Output files are named after the dataset that produced them, so a run on one corpus cannot
+quietly overwrite another's results. `tests/test_site.py` fails if the site's JSON does not
+match a file in `results/`, so the page cannot show numbers the tool did not produce.
 
 ## Contributing
 
 The most useful contributions, in order:
 
 1. **A backend adapter** — Qdrant, Weaviate or pgvector, implementing
-   [`Backend`](src/vecverdict/backends/base.py) and passing the shared conformance suite.
+   [`Backend`](https://github.com/Charan-Hari/vecverdict/blob/main/src/vecverdict/backends/base.py) and passing the shared conformance suite.
 2. **A counterexample** — a configuration where these findings do not reproduce. That is
    more valuable than a confirmation.
 3. **Results from real corpora**, with the dataset named so others can reproduce them.

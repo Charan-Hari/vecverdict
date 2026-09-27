@@ -20,6 +20,13 @@ RESULTS = ROOT / "results"
 
 SITE_FILES = ["index.html", "style.css", "app.js", "data/probe.json", "data/sweep.json"]
 
+# These tests guard the repository's published site, which is deliberately not
+# shipped in the sdist. Skip rather than fail when running from a source
+# distribution, where docs/ was never present to begin with.
+pytestmark = pytest.mark.skipif(
+    not DOCS.is_dir(), reason="docs/ is not part of the source distribution"
+)
+
 
 @pytest.mark.parametrize("name", SITE_FILES)
 def test_site_file_exists(name):
@@ -27,19 +34,37 @@ def test_site_file_exists(name):
     assert (DOCS / name).is_file(), f"docs/{name} is missing"
 
 
-def test_site_data_matches_committed_results():
-    """The site serves the same bytes as results/, not a stale copy."""
-    pairs = [
-        ("data/probe.json", "probe_0.1pct.json"),
-        ("data/sweep.json", "demo_synthetic_30k.json"),
-    ]
-    for site_name, result_name in pairs:
-        site = json.loads((DOCS / site_name).read_text(encoding="utf-8"))
-        source = json.loads((RESULTS / result_name).read_text(encoding="utf-8"))
-        assert site == source, (
-            f"docs/{site_name} has drifted from results/{result_name}; "
-            "regenerate it rather than editing the site copy"
+def _site_data(name):
+    return json.loads((DOCS / name).read_text(encoding="utf-8"))
+
+
+def test_site_data_matches_a_committed_result():
+    """The site serves measured bytes, not a hand-edited copy.
+
+    Result files are named after the dataset that produced them, so this locates
+    the matching file by content rather than assuming a fixed name.
+    """
+    for site_name in ("data/probe.json", "data/sweep.json"):
+        site = _site_data(site_name)
+        candidates = [
+            json.loads(path.read_text(encoding="utf-8"))
+            for path in RESULTS.glob("*.json")
+            if not path.name.startswith("_")
+        ]
+        assert any(site == candidate for candidate in candidates), (
+            f"docs/{site_name} matches no file in results/; "
+            "regenerate with `vecverdict site` rather than editing the site copy"
         )
+
+
+def test_site_sweep_and_probe_describe_the_same_dataset():
+    """A probe from one dataset beside a sweep from another would mislead."""
+    probe = _site_data("data/probe.json")
+    sweep = _site_data("data/sweep.json")
+    assert probe["dataset"] == sweep["dataset"], (
+        f"probe is {probe['dataset']!r} but sweep is {sweep['dataset']!r}; "
+        "the page would present them as one run"
+    )
 
 
 def test_probe_data_shows_a_real_shortfall():
@@ -61,6 +86,9 @@ def test_page_hard_codes_no_measurements():
     html = (DOCS / "index.html").read_text(encoding="utf-8")
     body = re.sub(r"<pre>.*?</pre>", "", html, flags=re.DOTALL)
     body = re.sub(r"<!--.*?-->", "", body, flags=re.DOTALL)
+    # Attribute values are markup, not prose: a DOI in a citation URL is not a
+    # measurement a visitor reads. Strip them so only visible text is checked.
+    body = re.sub(r"<[^>]+>", " ", body)
 
     # Any decimal, percentage, or thousands-separated figure is a measurement
     # that should have come from the data instead.
@@ -69,8 +97,24 @@ def test_page_hard_codes_no_measurements():
         assert not found, f"hard-coded measurement in index.html: {found[:5]}"
 
 
+def test_every_placeholder_is_populated_by_script():
+    """Guard the failure where a new element keeps its em-dash placeholder.
+
+    The page ships em-dashes as placeholders. If app.js never writes to an id,
+    a visitor sees "—" where a measurement belongs, which reads as a broken
+    page. Every placeholder id must therefore be referenced by the script.
+    """
+    html = (DOCS / "index.html").read_text(encoding="utf-8")
+    script = (DOCS / "app.js").read_text(encoding="utf-8")
+
+    placeholder_ids = re.findall(r'id="([^"]+)"[^>]*>\s*—\s*<', html)
+    assert placeholder_ids, "expected placeholder elements in index.html"
+
+    unwired = [name for name in placeholder_ids if f'"{name}"' not in script]
+    assert not unwired, f"placeholders never filled in by app.js: {unwired}"
+
+
 def test_page_references_only_committed_assets():
-    """No link points at a file that was never committed."""
     html = (DOCS / "index.html").read_text(encoding="utf-8")
     refs = re.findall(r'(?:src|href)="([^"#]+)"', html)
     for ref in refs:

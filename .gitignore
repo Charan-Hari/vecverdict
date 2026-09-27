@@ -45,6 +45,7 @@ __pycache__/
 .eggs/
 build/
 dist/
+*.zip
 .venv/
 venv/
 env/

@@ -9,18 +9,46 @@ description = "Measure what your vector index actually returns, not what it clai
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
-keywords = ["vector-search", "benchmark", "recall", "ann", "rag", "embeddings"]
+authors = [{ name = "Charan Hari" }]
+keywords = [
+    "vector-search",
+    "vector-database",
+    "benchmark",
+    "recall",
+    "ann",
+    "rag",
+    "embeddings",
+    "faiss",
+    "hnsw",
+    "filtered-search",
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3 :: Only",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Testing",
+    "Topic :: System :: Benchmark",
+    "Typing :: Typed",
 ]
-dependencies = [
-    "numpy>=1.24",
-    "rich>=13.0",
-]
+# numpy alone: every backend is optional, so `pip install vecverdict` stays
+# small enough to add to a test job without dragging in a vector database.
+dependencies = ["numpy>=1.24"]
+
+[project.urls]
+Homepage = "https://github.com/Charan-Hari/vecverdict"
+Documentation = "https://charan-hari.github.io/vecverdict/"
+Repository = "https://github.com/Charan-Hari/vecverdict"
+Issues = "https://github.com/Charan-Hari/vecverdict/issues"
+Changelog = "https://github.com/Charan-Hari/vecverdict/releases"
 
 [project.optional-dependencies]
 # Backends are optional so `pip install vecverdict` stays light and the demo
@@ -47,6 +75,20 @@ vecverdict = "vecverdict.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/vecverdict"]
+
+# The sdist should let someone reproduce the published results, so tests and
+# the measured data travel with it. The demo site does not: it is served from
+# GitHub Pages and would only bloat the download.
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/tests",
+    "/results",
+    "/README.md",
+    "/CONTRIBUTING.md",
+    "/LICENSE",
+    "/pyproject.toml",
+]
 
 [tool.ruff]
 line-length = 100

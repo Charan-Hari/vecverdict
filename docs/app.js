@@ -19,9 +19,91 @@ function fmtSelectivity(s) {
 }
 
 async function loadJSON(path) {
-  const response = await fetch(path);
+  // Revalidate rather than trusting the HTTP cache: returning visitors would
+  // otherwise see a previous run's measurements rendered by current code,
+  // which is the one way this page can state a number that was never measured.
+  const response = await fetch(path, { cache: "no-cache" });
   if (!response.ok) throw new Error(`${path}: ${response.status}`);
   return response.json();
+}
+
+/* ---------- hero: the headline figures and miniature proof ---------- */
+
+function renderHero(probe, ordered, sweep) {
+  const worst = ordered[0];
+  const best = ordered[ordered.length - 1];
+
+  document.getElementById("h-worst-n").textContent = worst.n_returned;
+  document.getElementById("h-stat-returned").textContent = worst.n_returned;
+  document.getElementById("h-stat-k").textContent = probe.k;
+  document.getElementById("h-stat-best").textContent = `${best.n_correct}/${probe.k}`;
+  document.getElementById("h-proof-allowed").textContent = fmtInt(probe.n_allowed);
+  document.getElementById("h-proof-total").textContent = fmtInt(probe.n_vectors);
+
+  renderWorstFullSet(sweep);
+
+  const grid = document.getElementById("hero-grid");
+  grid.innerHTML = "";
+
+  for (const entry of ordered) {
+    const row = document.createElement("div");
+    row.className = "hero-row";
+
+    const name = document.createElement("div");
+    name.className = "name";
+    name.textContent = entry.backend;
+
+    const count = document.createElement("div");
+    count.className = "count";
+    count.textContent = `${entry.n_correct}/${probe.k}`;
+
+    const slots = document.createElement("div");
+    slots.className = "hero-slots";
+    for (let i = 0; i < probe.k; i++) {
+      const id = entry.returned[i];
+      const slot = document.createElement("div");
+      if (id === MISSING || id === undefined) {
+        slot.className = "hero-slot empty";
+        slot.title = `${entry.backend} slot ${i + 1}: nothing returned`;
+      } else {
+        const hit = entry.correct[i];
+        slot.className = "hero-slot " + (hit ? "hit" : "miss");
+        slot.title =
+          `${entry.backend} slot ${i + 1}: id ${id} — ` +
+          (hit ? "a true top-10 neighbour" : "not in the true top-10");
+      }
+      slots.appendChild(slot);
+    }
+
+    row.append(name, count, slots);
+    grid.appendChild(row);
+  }
+}
+
+/**
+ * Find the worst case of "a full-looking result set with wrong contents".
+ *
+ * This is the failure a count-only check cannot see, so it earns a headline
+ * slot. "Full-looking" is deliberately within 5% of k rather than exactly k:
+ * an index returning 9.8 of 10 passes any eyeball check, and that is precisely
+ * the case worth surfacing. Derived from the sweep so it tracks the data.
+ */
+function renderWorstFullSet(sweep) {
+  const nearFull = sweep.points.filter((p) => p.mean_returned >= sweep.k * 0.95);
+  const node = document.getElementById("h-stat-wrong");
+  const who = document.getElementById("h-stat-wrong-who");
+
+  if (!nearFull.length) {
+    node.textContent = "n/a";
+    who.textContent = "no index returned a full set";
+    return;
+  }
+
+  const worst = nearFull.reduce((a, b) => (a.recall_at_k <= b.recall_at_k ? a : b));
+  node.textContent = `${((1 - worst.recall_at_k) * 100).toFixed(0)}%`;
+  who.textContent =
+    `${worst.backend} returned ${worst.mean_returned.toFixed(1)}/${sweep.k} ` +
+    `at ${fmtSelectivity(worst.selectivity)}`;
 }
 
 /* ---------- section 1: one query, slot by slot ---------- */
@@ -31,6 +113,10 @@ function renderProbe(probe) {
   document.getElementById("m-allowed").textContent = fmtInt(probe.n_allowed);
   document.getElementById("m-sel").textContent = fmtSelectivity(probe.selectivity);
   document.getElementById("m-k").textContent = probe.k;
+
+  // Name the dataset so a visitor can tell real embeddings from synthetic ones.
+  const datasetNode = document.getElementById("m-dataset");
+  if (datasetNode) datasetNode.textContent = probe.dataset || "";
 
   const machine = probe.machine || {};
   document.getElementById("m-machine").textContent =
@@ -83,6 +169,7 @@ function renderProbe(probe) {
   }
 
   renderVerdict(probe, ordered);
+  return ordered;
 }
 
 function renderVerdict(probe, ordered) {
@@ -131,7 +218,7 @@ function drawSweepRow(index) {
   body.innerHTML = "";
 
   for (const point of [...points].sort((a, b) => a.recall_at_k - b.recall_at_k)) {
-    const short = point.mean_returned < sweep.k - 0.05;
+    const short = point.mean_returned < sweep.k * 0.95;
     const tr = document.createElement("tr");
     if (short) tr.className = "broken";
     tr.innerHTML =
@@ -143,26 +230,37 @@ function drawSweepRow(index) {
     body.appendChild(tr);
   }
 
-  const shortfalls = points.filter((p) => p.mean_returned < sweep.k - 0.05);
-  const degraded = points.filter(
-    (p) => p.mean_returned >= sweep.k - 0.05 && p.recall_at_k < 0.9
+  // A backend belongs in exactly one bucket. 9.8/10 is a shortfall, but it is
+  // the *deceptive* kind: it passes an eyeball check while a third of the
+  // contents are wrong. Saying both about one backend reads as a bug.
+  const missing = points.filter((p) => p.mean_returned < sweep.k * 0.95);
+  const nearFullButWrong = points.filter(
+    (p) => p.mean_returned >= sweep.k * 0.95 && p.recall_at_k < 0.9
   );
 
   const note = document.getElementById("sweep-note");
   const parts = [];
-  if (shortfalls.length) {
+  if (missing.length) {
     parts.push(
-      `${shortfalls.map((p) => p.backend).join(", ")} returned fewer than ${sweep.k} results.`
+      `${missing.map((p) => p.backend).join(", ")} returned fewer than ${sweep.k} results.`
     );
   }
-  if (degraded.length) {
+  if (nearFullButWrong.length) {
     parts.push(
-      `${degraded.map((p) => p.backend).join(", ")} returned a full set, but ` +
-        `${degraded.map((p) => `${((1 - p.recall_at_k) * 100).toFixed(0)}%`).join(", ")} of it was wrong — ` +
-        `the failure a count-only check misses.`
+      nearFullButWrong
+        .map(
+          (p) =>
+            `${p.backend} returned ${p.mean_returned.toFixed(1)} of ${sweep.k} — ` +
+            `close enough to look healthy — but ` +
+            `${((1 - p.recall_at_k) * 100).toFixed(0)}% of it was wrong, ` +
+            `which a count-only check misses.`
+        )
+        .join(" ")
     );
   }
-  note.textContent = parts.length ? parts.join(" ") : "Every index returned a full, correct result set at this width.";
+  note.textContent = parts.length
+    ? parts.join(" ")
+    : "Every index returned a full, correct result set at this width.";
 }
 
 /* ---------- boot ---------- */
@@ -173,8 +271,9 @@ function drawSweepRow(index) {
       loadJSON("data/probe.json"),
       loadJSON("data/sweep.json"),
     ]);
-    renderProbe(probe);
+    const ordered = renderProbe(probe);
     renderSweep(sweep);
+    renderHero(probe, ordered, sweep);
   } catch (error) {
     // Say what broke rather than leaving em-dash placeholders on screen.
     document.getElementById("verdict").textContent =

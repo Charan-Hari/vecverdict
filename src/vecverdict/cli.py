@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import logging
+import re
 import sys
 from pathlib import Path
 
@@ -124,6 +125,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
     site_cmd = subparsers.add_parser(
         "site", help="regenerate the demo site's measured data"
+    )
+    site_cmd.add_argument(
+        "--dataset",
+        default="synthetic",
+        help="'synthetic', 'dbpedia', or a path to a .npy/.npz file (default: synthetic)",
     )
     site_cmd.add_argument("--n", type=int, default=30_000, help="corpus size (default: 30000)")
     site_cmd.add_argument("--dim", type=int, default=128, help="dimension (default: 128)")
@@ -258,10 +264,17 @@ def _run_site(args: argparse.Namespace) -> int:
         )
         return 1
 
-    print(f"Generating {args.n:,} clustered vectors (dim {args.dim})...")
-    dataset = datasets.synthetic(
-        n=args.n, dim=args.dim, n_queries=args.queries, seed=args.seed
-    )
+    if args.dataset == "synthetic":
+        print(f"Generating {args.n:,} clustered vectors (dim {args.dim})...")
+        dataset = datasets.synthetic(
+            n=args.n, dim=args.dim, n_queries=args.queries, seed=args.seed
+        )
+    else:
+        print(f"Loading {args.dataset} (limit {args.n:,})...")
+        dataset = datasets.load(
+            args.dataset, limit=args.n, n_queries=args.queries, seed=args.seed
+        )
+    print(f"{dataset.name}: {dataset.size:,} vectors, dim {dataset.dim}")
 
     print(f"Sweeping {len(installed)} backends: {', '.join(installed)}")
     result = _sweep(dataset, installed, args.k, "ip", seed=args.seed)
@@ -309,8 +322,14 @@ def _run_site(args: argparse.Namespace) -> int:
         for instance in instances:
             instance.close()
 
-    sweep_path = result.save(args.results / "demo_synthetic_30k.json")
-    probe_path = probe_result.save(args.results / "probe_0.1pct.json")
+    # Name files after what was actually measured. A fixed name would let a
+    # dbpedia run overwrite the synthetic results while still claiming to be
+    # synthetic, and the site would silently mislabel its own data.
+    slug = re.sub(r"[^a-z0-9]+", "_", dataset.name.lower()).strip("_")
+    sel_slug = f"{args.selectivity:.6f}".rstrip("0").rstrip(".").replace(".", "p")
+
+    sweep_path = result.save(args.results / f"sweep_{slug}.json")
+    probe_path = probe_result.save(args.results / f"probe_{slug}_{sel_slug}.json")
 
     data_dir = args.docs / "data"
     data_dir.mkdir(parents=True, exist_ok=True)

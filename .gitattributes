@@ -1,3 +1,7 @@
+# NOTE: this repository's existing history stores text files with CRLF.
+# Do not add a global `eol=lf` rule here without a dedicated renormalisation
+# commit -- doing so rewrites every tracked file and buries real changes.
+
 # Shell scripts must keep LF endings, or bash fails with a confusing
 # "bad interpreter: \r" on Windows-checked-out copies.
 *.sh text eol=lf
