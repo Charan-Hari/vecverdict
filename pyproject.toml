@@ -1,0 +1,63 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "vecverdict"
+version = "0.1.0"
+description = "Measure what your vector index actually returns, not what it claims."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+keywords = ["vector-search", "benchmark", "recall", "ann", "rag", "embeddings"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "numpy>=1.24",
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+# Backends are optional so `pip install vecverdict` stays light and the demo
+# runs without pulling every vector database in the ecosystem.
+turbovec = ["turbovec>=1.0.0"]
+faiss = ["faiss-cpu>=1.8.0"]
+chroma = ["chromadb>=1.0.0"]
+qdrant = ["qdrant-client>=1.9.0"]
+viz = ["matplotlib>=3.7"]
+data = ["datasets>=2.14", "sentence-transformers>=3.0"]
+all = [
+    "turbovec>=1.0.0",
+    "faiss-cpu>=1.8.0",
+    "chromadb>=1.0.0",
+    "qdrant-client>=1.9.0",
+    "matplotlib>=3.7",
+    "datasets>=2.14",
+    "sentence-transformers>=3.0",
+]
+dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.6", "detect-secrets>=1.5"]
+
+[project.scripts]
+vecverdict = "vecverdict.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vecverdict"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF"]
+# B027: Backend.close() is intentionally a concrete no-op. Most adapters hold
+# no resources, and forcing every one to define an empty override adds noise.
+ignore = ["B027"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
