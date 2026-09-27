@@ -1,0 +1,29 @@
+{
+  "name": "Vector Verdict",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12-bookworm",
+
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+
+  "postCreateCommand": "pip install --upgrade pip && pip install -e '.[turbovec,faiss,chroma,viz,dev]'",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "charliermarsh.ruff"
+      ],
+      "settings": {
+        "python.testing.pytestEnabled": true,
+        "python.testing.pytestArgs": ["tests"],
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff",
+          "editor.formatOnSave": true
+        }
+      }
+    }
+  },
+
+  "remoteUser": "vscode"
+}
