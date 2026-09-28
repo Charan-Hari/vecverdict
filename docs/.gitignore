@@ -1,0 +1,69 @@
+# ── Secrets and credentials ───────────────────────────────────────────────
+# Nothing in this project should ever need a credential, but these patterns
+# are here so an accidental local file can never become a commit.
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+secrets.*
+credentials.*
+*_secret*
+*_token*
+*apikey*
+*api_key*
+.netrc
+.htpasswd
+
+# ── Datasets and generated artifacts ──────────────────────────────────────
+# Corpora and embeddings are multi-GB and always re-downloadable. Result
+# JSONs are committed deliberately (see results/), but raw data never is.
+data/
+cache/
+*.npy
+*.npz
+*.hdf5
+*.h5
+*.arrow
+*.parquet
+
+# ── Vector index files ────────────────────────────────────────────────────
+# Index files can contain reconstructible user embeddings; treat as data.
+*.faiss
+*.index
+*.tv
+*.tvim
+chroma_db/
+qdrant_storage/
+
+# ── Python ────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+*.zip
+.venv/
+venv/
+env/
+.tox/
+.nox/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# ── Editors and OS ────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
