@@ -20,8 +20,14 @@ credentials.*
 # ── Datasets and generated artifacts ──────────────────────────────────────
 # Corpora and embeddings are multi-GB and always re-downloadable. Result
 # JSONs are committed deliberately (see results/), but raw data never is.
-data/
+# Anchored to the root: a bare `data/` also swallowed docs/data/, which is
+# the measured JSON GitHub Pages serves, leaving the published site blank.
+/data/
 cache/
+
+# The published site reads these; they must be tracked.
+!docs/data/
+!docs/data/*.json
 *.npy
 *.npz
 *.hdf5
